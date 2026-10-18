@@ -33,7 +33,7 @@ class EVChargingEnv:
     N_ACTIONS = 12
     STATE_SIZE = 25
 
-    GRID_LIMIT = 100.0
+    GRID_LIMIT = 60.0
     SOC_MIN = 0.30
     LAMBDA_GRID = 1.0
     LAMBDA_SOC = 100.0
@@ -383,6 +383,18 @@ class EVChargingEnv:
         departed = (self.conn[t] == 1) & (next_connected == 0)
         arrived = (self.conn[t] == 0) & (next_connected == 1)
 
+        departure_shortfall = np.maximum(
+        0.0,
+        0.90 - self.soc[departed]
+        )
+        departure_penalty = 100.0 * np.sum(departure_shortfall ** 2)
+
+        # Include departure penalty in reward.
+        reward -= departure_penalty
+
+        # Reset departed EVs.
+        self.soc[departed] = 0.0
+
         # A departing EV leaves the simulation.
         self.soc[departed] = 0.0
 
@@ -414,6 +426,7 @@ class EVChargingEnv:
             "soc_after_charging": self.soc.copy(),
             "arrived_ev_indices": np.flatnonzero(arrived).tolist(),
             "departed_ev_indices": np.flatnonzero(departed).tolist(),
+            "departure_penalty": float(departure_penalty),
         }
 
         return next_state, float(reward), done, info
