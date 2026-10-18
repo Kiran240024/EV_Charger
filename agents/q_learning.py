@@ -26,7 +26,7 @@ N_ACTIONS = 12
 ACTION_STEP_KW = 10.0
 
 SOC_MIN = 0.30
-GRID_LIMIT_KW = 100.0
+GRID_LIMIT_KW = 60.0
 
 # State discretization settings
 N_PRICE_LEVELS = 3
