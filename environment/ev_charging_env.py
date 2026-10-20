@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +18,8 @@ class EVChargingEnv:
         Aggregate charging power = action * 10 kW.
 
     Reward:
-        -(charging cost + grid overload penalty + SOC penalty)
+        -(charging cost + grid overload penalty + SOC penalty
+          + departure penalty)
 
     One step represents 15 minutes.
     """
@@ -27,7 +27,7 @@ class EVChargingEnv:
     # -------------------- Environment constants --------------------
 
     N_EV = 10
-    DT = 0.25                       # 15 minutes in hours
+    DT = 0.25
     MAX_EV_KW = 11.0
     ACTION_STEP_KW = 10.0
     N_ACTIONS = 12
@@ -41,18 +41,21 @@ class EVChargingEnv:
 
     # Effective battery capacities inferred from the dataset.
     # These are simulation parameters, not explicit dataset fields.
-    CAPACITIES = np.array([
-        102.27,  # EV0
-        102.27,  # EV1
-        41.59,   # EV2
-        41.59,   # EV3
-        59.09,   # EV4
-        102.27,  # EV5
-        59.09,   # EV6
-        59.09,   # EV7
-        41.59,   # EV8
-        87.50,   # EV9
-    ], dtype=float)
+    CAPACITIES = np.array(
+        [
+            102.27,  # EV0
+            102.27,  # EV1
+            41.59,   # EV2
+            41.59,   # EV3
+            59.09,   # EV4
+            102.27,  # EV5
+            59.09,   # EV6
+            59.09,   # EV7
+            41.59,   # EV8
+            87.50,   # EV9
+        ],
+        dtype=float,
+    )
 
     def __init__(
         self,
@@ -92,6 +95,25 @@ class EVChargingEnv:
         self.lambda_soc = float(lambda_soc)
         self.episode_len = episode_len
 
+        if not np.isfinite(
+            [
+                self.grid_limit,
+                self.soc_min,
+                self.lambda_grid,
+                self.lambda_soc,
+            ]
+        ).all():
+            raise ValueError("Environment parameters must be finite.")
+
+        if self.grid_limit <= 0:
+            raise ValueError("grid_limit must be positive.")
+
+        if not 0 <= self.soc_min <= 1:
+            raise ValueError("soc_min must be between 0 and 1.")
+
+        if self.lambda_grid < 0 or self.lambda_soc < 0:
+            raise ValueError("Penalty weights cannot be negative.")
+
         self.rng = np.random.default_rng(seed)
 
         if len(self.df) < 2:
@@ -99,14 +121,17 @@ class EVChargingEnv:
 
         if episode_len is not None:
             if not isinstance(episode_len, (int, np.integer)):
-                raise TypeError("episode_len must be an integer or None.")
+                raise TypeError(
+                    "episode_len must be an integer or None."
+                )
+
             if episode_len < 1 or episode_len >= len(self.df):
                 raise ValueError(
                     "episode_len must be positive and smaller than "
                     "the number of dataset rows."
                 )
 
-        # Validate and load all required columns.
+        # Validate required dataset columns.
         required_columns = (
             [f"soc.EV_{i}" for i in range(self.N_EV)]
             + [f"EV_{i}.connected" for i in range(self.N_EV)]
@@ -139,23 +164,33 @@ class EVChargingEnv:
         )
 
         if not np.isfinite(self.conn).all():
-            raise ValueError("Connection data contains invalid values.")
+            raise ValueError(
+                "Connection data contains invalid values."
+            )
 
         if not np.isin(self.conn, [0, 1]).all():
-            raise ValueError("Connection values must be 0 or 1.")
+            raise ValueError(
+                "Connection values must be 0 or 1."
+            )
 
         self.conn = self.conn.astype(int)
 
-        # Historical SOC is used to initialize EVs and when they arrive.
+        # Historical SOC initializes EVs and is used when they arrive.
         self.soc_data = self.df[
             [f"soc.EV_{i}" for i in range(self.N_EV)]
         ].to_numpy(dtype=float)
 
         if not np.isfinite(self.soc_data).all():
-            raise ValueError("SOC data contains missing or invalid values.")
+            raise ValueError(
+                "SOC data contains missing or invalid values."
+            )
 
-        if np.any((self.soc_data < 0) | (self.soc_data > 1)):
-            raise ValueError("SOC values must be between 0 and 1.")
+        if np.any(
+            (self.soc_data < 0) | (self.soc_data > 1)
+        ):
+            raise ValueError(
+                "SOC values must be between 0 and 1."
+            )
 
         self.soc_data = self.soc_data.copy()
         self.soc_data[self.conn == 0] = 0.0
@@ -173,19 +208,28 @@ class EVChargingEnv:
         self.hsin = self.df["hour_sin"].to_numpy(dtype=float)
         self.hcos = self.df["hour_cos"].to_numpy(dtype=float)
 
-        exogenous = np.column_stack([
-            self.price, self.load, self.pv, self.hsin, self.hcos
-        ])
+        exogenous = np.column_stack(
+            [
+                self.price,
+                self.load,
+                self.pv,
+                self.hsin,
+                self.hcos,
+            ]
+        )
 
         if not np.isfinite(exogenous).all():
             raise ValueError(
                 "Price, load, PV, or time features contain invalid values."
             )
 
-        if not np.isfinite(self.CAPACITIES).all() or np.any(
-            self.CAPACITIES <= 0
+        if (
+            not np.isfinite(self.CAPACITIES).all()
+            or np.any(self.CAPACITIES <= 0)
         ):
-            raise ValueError("Battery capacities must be finite and positive.")
+            raise ValueError(
+                "Battery capacities must be finite and positive."
+            )
 
         self.T = len(self.df)
 
@@ -199,19 +243,24 @@ class EVChargingEnv:
 
     def _get_state(self):
         """Return the current 25-value observation."""
-        state = np.concatenate([
-            self.soc,
-            self.conn[self.t],
-            np.array([
-                self.price[self.t],
-                self.load[self.t],
-                self.pv[self.t],
-                self.hsin[self.t],
-                self.hcos[self.t],
-            ]),
-        ])
+        state = np.concatenate(
+            [
+                self.soc,
+                self.conn[self.t],
+                np.array(
+                    [
+                        self.price[self.t],
+                        self.load[self.t],
+                        self.pv[self.t],
+                        self.hsin[self.t],
+                        self.hcos[self.t],
+                    ]
+                ),
+            ]
+        )
 
         assert state.shape == (self.STATE_SIZE,)
+
         return state.astype(np.float32)
 
     # -------------------- Charging allocation --------------------
@@ -266,13 +315,17 @@ class EVChargingEnv:
                 start = 0
             else:
                 max_start = self.T - 1 - self.episode_len
-                start = int(self.rng.integers(0, max_start + 1))
+                start = int(
+                    self.rng.integers(0, max_start + 1)
+                )
 
         if not isinstance(start, (int, np.integer)):
             raise TypeError("start must be an integer.")
 
         if start < 0 or start >= self.T - 1:
-            raise ValueError("start must identify a valid dataset row.")
+            raise ValueError(
+                "start must identify a valid dataset row."
+            )
 
         self.t = int(start)
 
@@ -312,10 +365,14 @@ class EVChargingEnv:
         if isinstance(action, (bool, np.bool_)) or not isinstance(
             action, (int, np.integer)
         ):
-            raise TypeError("Action must be an integer from 0 to 11.")
+            raise TypeError(
+                "Action must be an integer from 0 to 11."
+            )
 
         if not 0 <= action < self.N_ACTIONS:
-            raise ValueError("Action must be between 0 and 11.")
+            raise ValueError(
+                "Action must be between 0 and 11."
+            )
 
         t = self.t
 
@@ -340,6 +397,10 @@ class EVChargingEnv:
 
         self.soc = np.clip(self.soc, 0.0, 1.0)
 
+        # IMPORTANT: Capture SOC before processing departures.
+        # Departing EVs will be reset to zero later in this step.
+        soc_after_charging = self.soc.copy()
+
         # 4. Calculate grid draw.
         # Dataset convention: load is negative, PV is positive.
         grid_usage = -(
@@ -351,7 +412,10 @@ class EVChargingEnv:
         charging_cost = energy_kwh * self.price[t]
 
         # 6. Penalize grid draw above the configured limit.
-        overload_kw = max(0.0, grid_usage - self.grid_limit)
+        overload_kw = max(
+            0.0,
+            grid_usage - self.grid_limit,
+        )
 
         grid_penalty = (
             self.lambda_grid * overload_kw ** 2
@@ -369,7 +433,7 @@ class EVChargingEnv:
             self.lambda_soc * np.sum(soc_shortfall ** 2)
         )
 
-        # 8. Reward is the negative total cost and penalties.
+        # 8. Base reward is the negative total cost and penalties.
         reward = -(
             charging_cost
             + grid_penalty
@@ -380,14 +444,27 @@ class EVChargingEnv:
         self.t += 1
         next_connected = self.conn[self.t]
 
-        departed = (self.conn[t] == 1) & (next_connected == 0)
-        arrived = (self.conn[t] == 0) & (next_connected == 1)
+        departed = (
+            (self.conn[t] == 1)
+            & (next_connected == 0)
+        )
+
+        arrived = (
+            (self.conn[t] == 0)
+            & (next_connected == 1)
+        )
+
+        # Record SOC at departure before resetting departed EVs.
+        departure_soc = soc_after_charging[departed].copy()
 
         departure_shortfall = np.maximum(
-        0.0,
-        0.90 - self.soc[departed]
+            0.0,
+            0.90 - departure_soc,
         )
-        departure_penalty = 100.0 * np.sum(departure_shortfall ** 2)
+
+        departure_penalty = (
+            100.0 * np.sum(departure_shortfall ** 2)
+        )
 
         # Include departure penalty in reward.
         reward -= departure_penalty
@@ -395,13 +472,12 @@ class EVChargingEnv:
         # Reset departed EVs.
         self.soc[departed] = 0.0
 
-        # A departing EV leaves the simulation.
-        self.soc[departed] = 0.0
+        # Newly arriving EVs receive their dataset-recorded initial SOC.
+        self.soc[arrived] = self.soc_data[
+            self.t, arrived
+        ]
 
-        # A newly arriving EV gets its dataset-recorded initial SOC.
-        self.soc[arrived] = self.soc_data[self.t, arrived]
-
-        # Disconnected EVs must have zero SOC in the state.
+        # Disconnected EVs must have zero SOC in the next state.
         self.soc[next_connected == 0] = 0.0
 
         done = self.t >= self.end
@@ -423,9 +499,14 @@ class EVChargingEnv:
             "soc_penalty": float(soc_penalty),
             "reward": float(reward),
             "soc_before": soc_before,
-            "soc_after_charging": self.soc.copy(),
-            "arrived_ev_indices": np.flatnonzero(arrived).tolist(),
-            "departed_ev_indices": np.flatnonzero(departed).tolist(),
+            "soc_after_charging": soc_after_charging,
+            "arrived_ev_indices": np.flatnonzero(
+                arrived
+            ).tolist(),
+            "departed_ev_indices": np.flatnonzero(
+                departed
+            ).tolist(),
+            "departure_soc": departure_soc.copy(),
             "departure_penalty": float(departure_penalty),
         }
 

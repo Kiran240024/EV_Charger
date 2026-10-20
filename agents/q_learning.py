@@ -1,4 +1,3 @@
-
 """
 Tabular Q-learning agent for EV charging optimization.
 
@@ -18,7 +17,7 @@ import numpy as np
 
 
 # --------------------------------------------------
-# Environment-compatible constants
+# 1. Environment-compatible constants
 # --------------------------------------------------
 
 N_EV = 10
@@ -40,23 +39,25 @@ DEFAULT_EPSILON = 1.0
 
 
 # --------------------------------------------------
-# 1. Fit discretization thresholds
+# 2. Fit discretization thresholds
 # --------------------------------------------------
 
-def fit_bins(env, n_price_levels=N_PRICE_LEVELS,
-             n_hour_blocks=N_HOUR_BLOCKS,
-             n_headroom_levels=N_HEADROOM_LEVELS):
+def fit_bins(
+    env,
+    n_price_levels=N_PRICE_LEVELS,
+    n_hour_blocks=N_HOUR_BLOCKS,
+    n_headroom_levels=N_HEADROOM_LEVELS,
+):
     """
-    Derive discretization thresholds from the environment's data.
+    Derive state discretization thresholds from environment data.
     """
 
     price_edges = np.quantile(
         env.price,
-        np.linspace(0, 1, n_price_levels + 1)[1:-1]
+        np.linspace(0, 1, n_price_levels + 1)[1:-1],
     )
 
-    # Preserve the previous SOC-threshold design.
-    # 0.30 = minimum SOC threshold; 0.90 = reference target.
+    # SOC thresholds: minimum, intermediate, and target levels.
     soc_edges = [SOC_MIN, 0.60, 0.90]
 
     return {
@@ -69,12 +70,12 @@ def fit_bins(env, n_price_levels=N_PRICE_LEVELS,
 
 
 # --------------------------------------------------
-# 2. Determine Q-table dimensions
+# 3. Determine Q-table dimensions
 # --------------------------------------------------
 
 def get_q_table_shape(bins):
     """
-    Returns the dimensions of the Q-table, including actions.
+    Return Q-table dimensions, including the action dimension.
     """
 
     return (
@@ -88,13 +89,13 @@ def get_q_table_shape(bins):
 
 
 # --------------------------------------------------
-# 3. Convert the raw state into a discrete state
+# 4. Convert the raw state into a discrete state
 # --------------------------------------------------
 
 def discretize_state(state, bins):
     """
-    Convert a 25-feature environment state into a
-    five-dimensional tuple for indexing the Q-table.
+    Convert a 25-feature environment observation into a
+    five-dimensional tuple suitable for Q-table indexing.
     """
 
     state = np.asarray(state, dtype=float)
@@ -104,7 +105,10 @@ def discretize_state(state, bins):
             f"Expected a 25-feature state, got {state.shape}"
         )
 
-    # Extract the state features.
+    if not np.all(np.isfinite(state)):
+        raise ValueError("State must contain only finite values.")
+
+    # Extract state features.
     soc = state[:N_EV]
     connected = state[N_EV:2 * N_EV]
 
@@ -165,21 +169,23 @@ def discretize_state(state, bins):
 
 
 # --------------------------------------------------
-# 4. Epsilon-greedy action selection
+# 5. Epsilon-greedy action selection
 # --------------------------------------------------
 
 def choose_action(q_table, discrete_state, epsilon, rng):
     """
-    With probability epsilon, explore a random action.
-    Otherwise, exploit the best-known action.
+    Select an action using epsilon-greedy exploration.
     """
+
+    if not 0.0 <= epsilon <= 1.0:
+        raise ValueError("Epsilon must be between 0 and 1.")
 
     if rng.random() < epsilon:
         return int(rng.integers(N_ACTIONS))
 
     q_values = q_table[discrete_state]
 
-    # Random tie-breaking prevents always favoring action 0.
+    # Random tie-breaking avoids always choosing action zero.
     best_actions = np.flatnonzero(
         q_values == q_values.max()
     )
@@ -188,7 +194,7 @@ def choose_action(q_table, discrete_state, epsilon, rng):
 
 
 # --------------------------------------------------
-# 5. Q-learning update
+# 6. Q-learning update
 # --------------------------------------------------
 
 def update_q_table(
@@ -205,6 +211,23 @@ def update_q_table(
     Update Q(s, a) using the standard Q-learning equation.
     """
 
+    if not isinstance(action, (int, np.integer)):
+        raise ValueError("Action must be an integer.")
+
+    if not 0 <= action < N_ACTIONS:
+        raise ValueError(
+            f"Action must be between 0 and {N_ACTIONS - 1}."
+        )
+
+    if not np.isfinite(reward):
+        raise ValueError("Reward must be finite.")
+
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError("Alpha must be in (0, 1].")
+
+    if not 0.0 <= gamma <= 1.0:
+        raise ValueError("Gamma must be in [0, 1].")
+
     current_q = q_table[state + (action,)]
 
     if done:
@@ -219,15 +242,12 @@ def update_q_table(
 
 
 # --------------------------------------------------
-# 6. Q-learning agent
+# 7. Q-learning agent
 # --------------------------------------------------
 
 class QLearningAgent:
     """
-    Tabular Q-learning agent.
-
-    The training loop will be implemented separately in
-    training/train_q_learning.py.
+    Tabular Q-learning agent for EV charging optimization.
     """
 
     def __init__(
@@ -238,9 +258,19 @@ class QLearningAgent:
         epsilon=DEFAULT_EPSILON,
         seed=42,
     ):
-        self.alpha = alpha
-        self.gamma = gamma
-        self.epsilon = epsilon
+
+        if not 0.0 < alpha <= 1.0:
+            raise ValueError("Alpha must be in (0, 1].")
+
+        if not 0.0 <= gamma <= 1.0:
+            raise ValueError("Gamma must be in [0, 1].")
+
+        if not 0.0 <= epsilon <= 1.0:
+            raise ValueError("Epsilon must be between 0 and 1.")
+
+        self.alpha = float(alpha)
+        self.gamma = float(gamma)
+        self.epsilon = float(epsilon)
 
         self.rng = np.random.default_rng(seed)
 
@@ -252,11 +282,12 @@ class QLearningAgent:
         )
 
     def get_discrete_state(self, state):
-        """Convert a raw environment state to a Q-table index."""
+        """Convert a raw environment observation to a Q-table index."""
+
         return discretize_state(state, self.bins)
 
     def select_action(self, state, explore=True):
-        """Select an action for the current raw state."""
+        """Select a valid charging action for the current state."""
 
         discrete_state = self.get_discrete_state(state)
 
@@ -277,11 +308,31 @@ class QLearningAgent:
         next_state,
         done,
     ):
-        """Update the Q-table after one environment transition."""
+        """
+        Update the Q-table after a valid environment transition.
 
+        Invalid actions are rejected before the Q-table is modified.
+        """
+
+        # Validate the action before it can index the Q-table.
+        if not isinstance(action, (int, np.integer)):
+            raise ValueError("Action must be an integer.")
+
+        if not 0 <= action < N_ACTIONS:
+            raise ValueError(
+                f"Invalid action {action}. "
+                f"Expected an integer from 0 to {N_ACTIONS - 1}."
+            )
+
+        # Validate the reward.
+        if not np.isfinite(reward):
+            raise ValueError("Reward must be finite.")
+
+        # Convert observations to discrete states.
         discrete_state = self.get_discrete_state(state)
         next_discrete_state = self.get_discrete_state(next_state)
 
+        # Perform the Q-learning update.
         update_q_table(
             self.q_table,
             discrete_state,
