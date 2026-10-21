@@ -2,11 +2,14 @@
 Train a Deep Q-Network for EV charging optimization.
 
 Uses the existing EVChargingEnv and DQNAgent.
+Saves training metrics and generates a reward-vs-episodes graph.
 """
 
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 from agents.dqn import DQNAgent
 from environment.ev_charging_env import EVChargingEnv
@@ -17,14 +20,25 @@ from environment.ev_charging_env import EVChargingEnv
 # --------------------------------------------------
 
 EPISODES = 5
-EPISODE_LENGTH = 96       # 24 hours, with 15-minute intervals
+EPISODE_LENGTH = 96
 SEED = 42
 
 MODEL_DIR = Path("models")
 MODEL_PATH = MODEL_DIR / "dqn_model.pth"
 
+TRAINING_DIR = Path("training")
+REWARDS_PATH = TRAINING_DIR / "dqn_training_rewards.csv"
+
+PLOT_DIR = Path("evaluation/plots")
+REWARD_PLOT_PATH = PLOT_DIR / "rl_training_performance.png"
+
+
+# --------------------------------------------------
+# Main training function
+# --------------------------------------------------
 
 def main():
+
     # Check that the processed dataset exists.
     csv_path = Path("data/processed/ev_charging_processed.csv")
 
@@ -32,6 +46,11 @@ def main():
         raise FileNotFoundError(
             f"Dataset not found: {csv_path.resolve()}"
         )
+
+    # Create required output directories.
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    TRAINING_DIR.mkdir(parents=True, exist_ok=True)
+    PLOT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Create the environment.
     env = EVChargingEnv(
@@ -55,7 +74,8 @@ def main():
         seed=SEED,
     )
 
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    # Store metrics from every episode.
+    training_history = []
 
     print("Starting DQN training")
     print(f"Dataset rows: {env.T}")
@@ -63,10 +83,14 @@ def main():
     print(f"Number of actions: {env.N_ACTIONS}")
     print(f"Episodes: {EPISODES}")
     print(f"Steps per episode: {EPISODE_LENGTH}")
-    print("-" * 50)
+    print("-" * 60)
 
-    # Training loop.
+    # --------------------------------------------------
+    # Training loop
+    # --------------------------------------------------
+
     for episode in range(1, EPISODES + 1):
+
         state = env.reset()
 
         total_reward = 0.0
@@ -77,6 +101,7 @@ def main():
         done = False
 
         while not done:
+
             # Choose an action.
             action = agent.select_action(state, explore=True)
 
@@ -112,6 +137,16 @@ def main():
             float(np.mean(losses)) if losses else 0.0
         )
 
+        # Save the episode metrics.
+        training_history.append({
+            "episode": episode,
+            "total_reward": total_reward,
+            "total_charging_cost": total_cost,
+            "total_energy_kwh": total_energy,
+            "average_loss": average_loss,
+            "epsilon": agent.epsilon,
+        })
+
         print(
             f"Episode {episode}/{EPISODES} | "
             f"Reward: {total_reward:.3f} | "
@@ -121,11 +156,54 @@ def main():
             f"Epsilon: {agent.epsilon:.3f}"
         )
 
-    # Save the trained model.
+    # --------------------------------------------------
+    # Save the trained model
+    # --------------------------------------------------
+
     agent.save(str(MODEL_PATH))
 
-    print("-" * 50)
-    print(f"Training finished. Model saved to: {MODEL_PATH}")
+    # --------------------------------------------------
+    # Save training metrics to CSV
+    # --------------------------------------------------
+
+    history_df = pd.DataFrame(training_history)
+    history_df.to_csv(REWARDS_PATH, index=False)
+
+    print("-" * 60)
+    print(f"Training metrics saved to: {REWARDS_PATH}")
+
+    # --------------------------------------------------
+    # Generate reward-vs-episodes graph
+    # --------------------------------------------------
+
+    plt.figure(figsize=(10, 6))
+
+    plt.plot(
+        history_df["episode"],
+        history_df["total_reward"],
+        marker="o",
+        label="Episode Reward",
+    )
+
+    plt.xlabel("Episode")
+    plt.ylabel("Total Reward")
+    plt.title("DQN Training Performance")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+
+    plt.savefig(
+        REWARD_PLOT_PATH,
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close()
+
+    print(f"Training graph saved to: {REWARD_PLOT_PATH}")
+    print(f"Trained model saved to: {MODEL_PATH}")
+    print("-" * 60)
+    print("DQN training completed successfully!")
 
 
 if __name__ == "__main__":

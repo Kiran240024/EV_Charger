@@ -14,6 +14,13 @@ ROOT = Path(__file__).resolve().parent
 DATA_FILE = ROOT / "data" / "processed" / "ev_charging_processed.csv"
 MODEL_DIR = ROOT / "models"
 RESULTS_DIR = ROOT / "evaluation"
+TRAINING_DIR = ROOT / "training"
+PLOTS_DIR = RESULTS_DIR / "plots"
+
+SUMMARY_FILE = RESULTS_DIR / "comparison_summary.csv"
+DETAILS_FILE = RESULTS_DIR / "comparison_details.csv"
+TIMESERIES_FILE = RESULTS_DIR / "comparison_timeseries.csv"
+DQN_REWARDS_FILE = TRAINING_DIR / "dqn_training_rewards.csv"
 
 DEFAULT_MODEL = MODEL_DIR / "q_learning_model_200.npz"
 
@@ -132,12 +139,6 @@ st.markdown(
         overflow: hidden;
     }
 
-    .hero-symbol {
-        font-size: 5rem;
-        line-height: 1;
-        margin-bottom: 12px;
-    }
-
     .hero-note {
         font-size: 0.85rem;
         color: #536A5B;
@@ -213,16 +214,6 @@ st.markdown(
         line-height: 1.7;
     }
 
-    .status-pill {
-        display: inline-block;
-        border-radius: 100px;
-        padding: 6px 12px;
-        background: #E6F2EA;
-        color: #216647;
-        font-size: 0.76rem;
-        font-weight: 700;
-    }
-
     .small-muted {
         color: var(--muted);
         font-size: 0.82rem;
@@ -262,11 +253,7 @@ st.markdown(
         border-color: var(--border);
     }
 
-    #MainMenu {
-        visibility: hidden;
-    }
-
-    footer {
+    #MainMenu, footer {
         visibility: hidden;
     }
 
@@ -339,7 +326,6 @@ def load_results(path):
 
 
 def run_command(command, timeout=1800):
-    """Execute a project command and return its output."""
     try:
         result = subprocess.run(
             command,
@@ -349,7 +335,6 @@ def run_command(command, timeout=1800):
             timeout=timeout,
             check=False,
         )
-
         return result.returncode, result.stdout, result.stderr
 
     except subprocess.TimeoutExpired:
@@ -396,6 +381,17 @@ def show_page_heading(eyebrow, title, description):
     st.write("")
 
 
+def download_csv_button(path, label, key):
+    if path.exists():
+        st.download_button(
+            label,
+            data=path.read_bytes(),
+            file_name=path.name,
+            mime="text/csv",
+            key=key,
+        )
+
+
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -411,13 +407,13 @@ with st.sidebar:
 
     st.write("")
     st.divider()
-
     st.markdown("##### WORKSPACE")
 
     pages = [
         "Overview",
         "Train model",
         "Evaluate agent",
+        "Strategy Comparison",
         "Results",
     ]
 
@@ -437,7 +433,6 @@ with st.sidebar:
     )
 
     st.divider()
-
     st.markdown("##### PROJECT STATUS")
 
     if DATA_FILE.exists():
@@ -445,18 +440,15 @@ with st.sidebar:
     else:
         st.error("Dataset missing", icon="❌")
 
-    models = available_models()
-
-    st.caption(f"Saved models · {len(models)}")
+    st.caption(f"Saved Q-learning models · {len(available_models())}")
     st.caption(f"Evaluation files · {len(available_results())}")
 
     st.divider()
-
     st.markdown(
         """
         <div class="small-muted">
             EVora · Reinforcement learning<br>
-            Q-learning based EV charging
+            Intelligent EV charging research
         </div>
         """,
         unsafe_allow_html=True,
@@ -478,9 +470,8 @@ if selected_page == "Overview":
                 <span>Wasting less.</span>
             </div>
             <div class="hero-description">
-                Explore how a Q-learning agent makes electric vehicle
-                charging decisions while balancing energy costs,
-                grid demand and battery requirements.
+                Explore how intelligent charging policies balance
+                energy costs, grid demand and battery requirements.
             </div>
             <div class="hero-note">
                 A research dashboard for intelligent EV charging decisions.
@@ -502,35 +493,17 @@ if selected_page == "Overview":
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        metric_card(
-            "Training dataset",
-            dataset_size,
-            "Processed charging data",
-        )
+        metric_card("Training dataset", dataset_size, "Processed charging data")
 
     with c2:
-        metric_card(
-            "Saved Q-tables",
-            str(len(models)),
-            "Available model files",
-        )
+        metric_card("Saved Q-tables", str(len(models)), "Available Q-learning models")
 
     with c3:
-        metric_card(
-            "Evaluation runs",
-            str(len(result_files)),
-            "Saved CSV result files",
-        )
+        metric_card("Evaluation files", str(len(result_files)), "Saved experiment CSVs")
 
+    st.markdown('<div class="section-title">Your workspace</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-title">Your workspace</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="section-subtitle">'
-        'Train, evaluate and inspect your charging agent.'
-        '</div>',
+        '<div class="section-subtitle">Train, evaluate and inspect your charging policies.</div>',
         unsafe_allow_html=True,
     )
 
@@ -540,103 +513,61 @@ if selected_page == "Overview":
         info_card(
             "01",
             "Train the agent",
-            "Run Q-learning on the processed EV charging dataset. "
-            "Choose the number of episodes and learning parameters, "
-            "then save a new model.",
+            "Configure and train a Q-learning model using the processed EV dataset.",
         )
-
-        if st.button(
-            "Open training workspace →",
-            key="go_train",
-            use_container_width=True,
-        ):
+        if st.button("Open training workspace →", key="go_train", use_container_width=True):
             st.session_state["requested_page"] = "Train model"
             st.rerun()
 
     with col2:
         info_card(
             "02",
-            "Evaluate performance",
-            "Compare the learned policy with baseline charging "
-            "strategies and inspect the metrics generated by your "
-            "evaluation script.",
+            "Compare charging policies",
+            "Compare immediate, price-based, Q-learning and DQN charging strategies.",
         )
-
-        if st.button(
-            "Open evaluation workspace →",
-            key="go_evaluate",
-            use_container_width=True,
-        ):
-            st.session_state["requested_page"] = "Evaluate agent"
+        if st.button("Explore strategy comparison →", key="go_compare", use_container_width=True):
+            st.session_state["requested_page"] = "Strategy Comparison"
             st.rerun()
-
-    st.write("")
 
     col3, col4 = st.columns(2, gap="large")
 
     with col3:
         info_card(
             "03",
-            "Explore results",
-            "Review evaluation CSV files, inspect numeric metrics "
-            "and download the results for your project report.",
+            "Evaluate a model",
+            "Run the existing evaluation pipeline for a saved Q-learning model.",
         )
-
-        if st.button(
-            "View evaluation results →",
-            key="go_results",
-            use_container_width=True,
-        ):
-            st.session_state["requested_page"] = "Results"
+        if st.button("Open evaluation workspace →", key="go_evaluate", use_container_width=True):
+            st.session_state["requested_page"] = "Evaluate agent"
             st.rerun()
 
     with col4:
         info_card(
             "04",
-            "Understand the workflow",
-            "The environment models EV charging decisions. "
-            "The agent learns a policy, and the evaluation module "
-            "compares that policy against baseline strategies.",
+            "Inspect results",
+            "Review experiment CSVs and download data for your project report.",
         )
+        if st.button("View results →", key="go_results", use_container_width=True):
+            st.session_state["requested_page"] = "Results"
+            st.rerun()
 
-    st.write("")
-
-    st.markdown(
-        '<div class="section-title">Project health</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="section-title">Project health</div>', unsafe_allow_html=True)
 
     health1, health2 = st.columns(2)
 
     with health1:
         if DATA_FILE.exists():
-            st.success(
-                f"Dataset found: `{DATA_FILE.relative_to(ROOT)}`",
-                icon="✅",
-            )
+            st.success(f"Dataset found: `{DATA_FILE.relative_to(ROOT)}`", icon="✅")
         else:
-            st.error(
-                "The processed dataset was not found at "
-                "`data/processed/ev_charging_processed.csv`.",
-                icon="❌",
-            )
+            st.error("Processed dataset not found.", icon="❌")
 
     with health2:
         if DEFAULT_MODEL.exists():
-            st.success(
-                "Default 200-episode model found.",
-                icon="✅",
-            )
+            st.success("Default Q-learning model found.", icon="✅")
         elif models:
-            st.info(
-                "Saved models are available. Select one on the evaluation page.",
-                icon="ℹ️",
-            )
+            st.info("Saved models are available for evaluation.", icon="ℹ️")
         else:
-            st.warning(
-                "No saved models found. Train a model to get started.",
-                icon="⚠️",
-            )
+            st.warning("No Q-learning model files found yet.", icon="⚠️")
 
 
 # ============================================================
@@ -647,23 +578,17 @@ elif selected_page == "Train model":
 
     show_page_heading(
         "MODEL DEVELOPMENT",
-        "Train your agent",
-        "Configure the learning process and generate a new Q-learning model.",
+        "Train your Q-learning agent",
+        "Configure the learning process and generate a new Q-table.",
     )
 
     if not DATA_FILE.exists():
-        st.error(
-            "The training dataset is missing. Expected location: "
-            "`data/processed/ev_charging_processed.csv`"
-        )
+        st.error("Missing dataset: `data/processed/ev_charging_processed.csv`")
         st.stop()
 
-    st.markdown(
-        '<div class="section-title">Training configuration</div>',
-        unsafe_allow_html=True,
-    )
-
     with st.form("training_form"):
+
+        st.markdown("### Training configuration")
 
         col1, col2 = st.columns(2)
 
@@ -674,7 +599,6 @@ elif selected_page == "Train model":
                 max_value=100000,
                 value=10,
                 step=10,
-                help="Use a small value for a quick test.",
             )
 
             episode_len = st.number_input(
@@ -721,12 +645,6 @@ elif selected_page == "Train model":
         output_name = st.text_input(
             "Output model filename",
             value="q_learning_dashboard.npz",
-            help="The file is saved inside the models directory.",
-        )
-
-        st.caption(
-            "Tip: Start with 10 episodes to verify the workflow. "
-            "Increase the number of episodes for more extensive experiments."
         )
 
         submitted = st.form_submit_button(
@@ -736,7 +654,6 @@ elif selected_page == "Train model":
         )
 
     if submitted:
-
         output_name = output_name.strip()
 
         if (
@@ -744,58 +661,35 @@ elif selected_page == "Train model":
             or Path(output_name).name != output_name
             or not output_name.endswith(".npz")
         ):
-            st.error(
-                "Enter a filename ending in `.npz`, "
-                "without a directory path."
-            )
+            st.error("Enter a filename ending in `.npz` without a directory path.")
 
         elif (MODEL_DIR / output_name).exists():
-            st.error(
-                f"`{output_name}` already exists. "
-                "Choose another filename to avoid overwriting it."
-            )
+            st.error("That model filename already exists. Choose another name.")
 
         else:
             command = [
                 sys.executable,
                 "-m",
                 "training.train_q_learning",
-                "--episodes",
-                str(int(episodes)),
-                "--episode-len",
-                str(int(episode_len)),
-                "--alpha",
-                str(alpha),
-                "--gamma",
-                str(gamma),
-                "--epsilon-end",
-                str(epsilon_end),
-                "--seed",
-                str(int(seed)),
-                "--output",
-                str(MODEL_DIR / output_name),
+                "--episodes", str(int(episodes)),
+                "--episode-len", str(int(episode_len)),
+                "--alpha", str(alpha),
+                "--gamma", str(gamma),
+                "--epsilon-end", str(epsilon_end),
+                "--seed", str(int(seed)),
+                "--output", str(MODEL_DIR / output_name),
             ]
 
-            st.markdown("#### Training progress")
-
-            with st.spinner(
-                "Training is running. This may take a little while..."
-            ):
+            with st.spinner("Training Q-learning agent..."):
                 return_code, stdout, stderr = run_command(command)
 
             show_command_result(return_code, stdout, stderr)
 
-            if return_code == 0:
-                output_path = MODEL_DIR / output_name
+            output_path = MODEL_DIR / output_name
 
-                if output_path.exists():
-                    st.session_state["last_trained_model"] = str(output_path)
-
-                    st.success(
-                        f"Model saved to `{output_path.relative_to(ROOT)}`"
-                    )
-
-                    st.balloons()
+            if return_code == 0 and output_path.exists():
+                st.session_state["last_trained_model"] = str(output_path)
+                st.success(f"Model saved to `{output_path.relative_to(ROOT)}`")
 
 
 # ============================================================
@@ -806,25 +700,20 @@ elif selected_page == "Evaluate agent":
 
     show_page_heading(
         "POLICY EVALUATION",
-        "Put the agent to the test",
-        "Evaluate a saved Q-learning policy against baseline charging strategies.",
+        "Evaluate your agent",
+        "Run the existing Q-learning evaluation pipeline.",
     )
 
     models = available_models()
 
     if not models:
-        st.warning(
-            "No model files were found. Train an agent before evaluating it."
-        )
-
+        st.warning("No Q-learning models found. Train an agent first.")
         if st.button("Go to training →", type="primary"):
             st.session_state["requested_page"] = "Train model"
             st.rerun()
-
         st.stop()
 
     model_options = [str(path) for path in models]
-
     last_model = st.session_state.get("last_trained_model")
 
     if last_model in model_options:
@@ -837,7 +726,7 @@ elif selected_page == "Evaluate agent":
     with st.form("evaluation_form"):
 
         selected_model = st.selectbox(
-            "Choose a trained model",
+            "Choose a trained Q-learning model",
             options=model_options,
             index=default_index,
             format_func=lambda path: Path(path).name,
@@ -875,7 +764,6 @@ elif selected_page == "Evaluate agent":
         )
 
     if evaluate_button:
-
         output_name = output_name.strip()
 
         if (
@@ -883,10 +771,7 @@ elif selected_page == "Evaluate agent":
             or Path(output_name).name != output_name
             or not output_name.endswith(".csv")
         ):
-            st.error(
-                "Enter a filename ending in `.csv`, "
-                "without a directory path."
-            )
+            st.error("Enter a CSV filename without a directory path.")
 
         else:
             output_path = RESULTS_DIR / output_name
@@ -895,45 +780,223 @@ elif selected_page == "Evaluate agent":
                 sys.executable,
                 "-m",
                 "evaluation.evaluate",
-                "--model",
-                selected_model,
-                "--episodes",
-                str(int(eval_episodes)),
-                "--episode-len",
-                str(int(eval_length)),
-                "--output",
-                str(output_path),
+                "--model", selected_model,
+                "--episodes", str(int(eval_episodes)),
+                "--episode-len", str(int(eval_length)),
+                "--output", str(output_path),
             ]
 
-            with st.spinner(
-                "Evaluating the selected model and baseline policies..."
-            ):
+            with st.spinner("Evaluating the selected model..."):
                 return_code, stdout, stderr = run_command(command)
 
             show_command_result(return_code, stdout, stderr)
 
             if return_code == 0 and output_path.exists():
-                st.success(
-                    f"Evaluation saved to `{output_path.relative_to(ROOT)}`"
+                df = load_results(output_path)
+                if not df.empty:
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+                download_csv_button(
+                    output_path,
+                    "Download evaluation CSV",
+                    "download_single_evaluation",
                 )
 
-                df = load_results(output_path)
 
-                if not df.empty:
-                    st.markdown("#### Evaluation output")
-                    st.dataframe(df, use_container_width=True)
+# ============================================================
+# STRATEGY COMPARISON PAGE
+# ============================================================
 
-                    st.download_button(
-                        "Download evaluation CSV",
-                        data=output_path.read_bytes(),
-                        file_name=output_path.name,
-                        mime="text/csv",
+elif selected_page == "Strategy Comparison":
+
+    show_page_heading(
+        "EXPERIMENT ANALYSIS",
+        "Strategy comparison",
+        "Compare charging policies using measured evaluation results.",
+    )
+
+    if not SUMMARY_FILE.exists():
+        st.warning("Comparison summary is missing. Run your strategy comparison script first.")
+        st.stop()
+
+    summary = load_results(SUMMARY_FILE)
+
+    if summary.empty or "strategy" not in summary.columns:
+        st.error("The comparison summary could not be read.")
+        st.stop()
+
+    metric_columns = {
+        "total_charging_cost": "Total Charging Cost",
+        "total_energy_kwh": "Total Energy Consumed (kWh)",
+        "peak_grid_load_kw": "Peak Grid Load (kW)",
+        "final_mean_soc_percent": "Final Mean SOC (%)",
+        "average_charging_delay_minutes": "Average Charging Delay (min)",
+        "deadline_violations": "Deadline Violations",
+        "charging_success_rate_percent": "Charging Success Rate (%)",
+    }
+
+    st.markdown("### Performance summary")
+
+    available_metric_columns = [
+        column for column in metric_columns if column in summary.columns
+    ]
+
+    display_summary = summary[["strategy"] + available_metric_columns].rename(
+        columns={
+            "strategy": "Charging Strategy",
+            **metric_columns,
+        }
+    )
+
+    st.dataframe(
+        display_summary,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "These values are averages across the evaluated windows. "
+        "Lower cost, energy, grid load, delay and violations are generally "
+        "preferable; a higher charging success rate is better."
+    )
+
+    # Cost comparison
+    st.markdown("### 1. Charging cost comparison")
+
+    if "total_charging_cost" in summary.columns:
+        st.bar_chart(
+            summary.set_index("strategy")[["total_charging_cost"]]
+        )
+
+    # Energy comparison
+    st.markdown("### 2. Energy consumption comparison")
+
+    if "total_energy_kwh" in summary.columns:
+        st.bar_chart(
+            summary.set_index("strategy")[["total_energy_kwh"]]
+        )
+
+    # SOC and grid load
+    if TIMESERIES_FILE.exists():
+        timeseries = load_results(TIMESERIES_FILE)
+
+        if not timeseries.empty and "strategy" in timeseries.columns:
+
+            strategy_options = timeseries["strategy"].dropna().unique().tolist()
+
+            selected_strategy = st.selectbox(
+                "Choose strategy for time-series analysis",
+                strategy_options,
+                key="comparison_strategy",
+            )
+
+            filtered = timeseries[
+                timeseries["strategy"] == selected_strategy
+            ].copy()
+
+            if "window_start" in filtered.columns:
+                windows = sorted(filtered["window_start"].dropna().unique())
+
+                if windows:
+                    selected_window = st.selectbox(
+                        "Evaluation window",
+                        windows,
+                        key="comparison_window",
                     )
-                else:
-                    st.warning(
-                        "The output file exists, but no readable rows "
-                        "were found in it."
+
+                    filtered = filtered[
+                        filtered["window_start"] == selected_window
+                    ]
+
+            if "time_hours" in filtered.columns:
+                filtered = filtered.sort_values("time_hours")
+
+                if "mean_connected_soc" in filtered.columns:
+                    st.markdown("### 3. Mean state of charge over time")
+
+                    soc_data = filtered.set_index("time_hours")[
+                        ["mean_connected_soc"]
+                    ].rename(
+                        columns={
+                            "mean_connected_soc": "Mean Connected SOC"
+                        }
                     )
+
+                    st.line_chart(soc_data)
+
+                if "grid_load_kw" in filtered.columns:
+                    st.markdown("### 4. Grid load over time")
+                    grid_data = filtered.set_index("time_hours")[["grid_load_kw"]]
+                    st.line_chart(grid_data)
+
+    else:
+        st.warning("Comparison time-series data is missing.")
+
+    # DQN training graph
+    st.markdown("### 5. DQN training performance")
+
+    if DQN_REWARDS_FILE.exists():
+        rewards = load_results(DQN_REWARDS_FILE)
+
+        if {"episode", "total_reward"}.issubset(rewards.columns):
+            reward_data = rewards.set_index("episode")[["total_reward"]].rename(
+                columns={"total_reward": "Episode Reward"}
+            )
+
+            st.line_chart(reward_data)
+
+            st.caption(
+                "This training run used five episodes as an initial smoke test. "
+                "The reward curve is preliminary and does not demonstrate convergence."
+            )
+
+            download_csv_button(
+                DQN_REWARDS_FILE,
+                "Download DQN training history",
+                "download_dqn_rewards",
+            )
+        else:
+            st.warning("The DQN training history has unexpected columns.")
+    else:
+        st.info("DQN training history has not been generated yet.")
+
+    st.markdown("### Download comparison data")
+
+    download_csv_button(
+        SUMMARY_FILE,
+        "Download strategy summary",
+        "download_summary",
+    )
+
+    download_csv_button(
+        DETAILS_FILE,
+        "Download detailed evaluation",
+        "download_details",
+    )
+
+    download_csv_button(
+        TIMESERIES_FILE,
+        "Download time-series data",
+        "download_timeseries",
+    )
+
+    if PLOTS_DIR.exists():
+        st.markdown("### Saved graphs")
+
+        graph_files = [
+            ("cost_comparison.png", "Charging cost comparison"),
+            ("energy_comparison.png", "Energy consumption comparison"),
+            ("soc_over_time.png", "SOC over time"),
+            ("grid_load_over_time.png", "Grid load over time"),
+            ("rl_training_performance.png", "DQN training performance"),
+        ]
+
+        for filename, caption in graph_files:
+            graph_path = PLOTS_DIR / filename
+
+            if graph_path.exists():
+                with st.expander(caption):
+                    st.image(str(graph_path), caption=caption, use_container_width=True)
 
 
 # ============================================================
@@ -943,39 +1006,38 @@ elif selected_page == "Evaluate agent":
 elif selected_page == "Results":
 
     show_page_heading(
-        "EXPERIMENT ANALYSIS",
-        "Results & insights",
-        "Inspect saved evaluation results and explore how the charging policies perform.",
+        "EXPERIMENT DATA",
+        "Results & downloads",
+        "Inspect saved CSV files and export experiment results.",
     )
 
     result_files = available_results()
 
     if not result_files:
-        st.info(
-            "No evaluation CSV files found yet. Run an evaluation to populate this page."
-        )
-
-        if st.button("Evaluate a model →", type="primary"):
-            st.session_state["requested_page"] = "Evaluate agent"
-            st.rerun()
-
+        st.info("No CSV results are available yet.")
         st.stop()
 
+    # Prefer the strategy summary as the default file.
+    result_options = [str(path) for path in result_files]
+
+    if str(SUMMARY_FILE) in result_options:
+        default_result_index = result_options.index(str(SUMMARY_FILE))
+    else:
+        default_result_index = 0
+
     selected_result = st.selectbox(
-        "Choose an evaluation file",
-        options=[str(path) for path in result_files],
+        "Choose an evaluation CSV",
+        options=result_options,
+        index=default_result_index,
         format_func=lambda path: Path(path).name,
     )
 
-    df = load_results(Path(selected_result))
+    result_path = Path(selected_result)
+    df = load_results(result_path)
 
     if df.empty:
-        st.warning(
-            "This CSV could not be loaded or contains no rows."
-        )
+        st.warning("The selected CSV is empty or could not be read.")
         st.stop()
-
-    st.markdown("#### Evaluation data")
 
     st.dataframe(
         df,
@@ -986,52 +1048,45 @@ elif selected_page == "Results":
     numeric_columns = df.select_dtypes(include="number").columns.tolist()
 
     if numeric_columns:
-
-        st.markdown("#### Explore a metric")
+        st.markdown("### Explore a metric")
 
         selected_metric = st.selectbox(
             "Numeric metric",
             numeric_columns,
+            key="results_metric",
         )
 
-        chart_data = df[[selected_metric]].copy()
+        possible_labels = [
+            column
+            for column in df.columns
+            if column not in numeric_columns
+            and df[column].nunique(dropna=True) <= 30
+        ]
 
-        if len(df.columns) > 1:
-            possible_labels = [
-                column
-                for column in df.columns
-                if column not in numeric_columns
-                and df[column].nunique(dropna=True) <= 30
-            ]
+        if possible_labels:
+            label_column = st.selectbox(
+                "Group by",
+                ["None"] + possible_labels,
+                key="results_group",
+            )
 
-            if possible_labels:
-                label_column = st.selectbox(
-                    "Group by (optional)",
-                    ["None"] + possible_labels,
-                )
+            if label_column != "None":
+                chart_df = df[[label_column, selected_metric]].copy()
+                chart_df = chart_df.set_index(label_column)
+                st.bar_chart(chart_df)
+            else:
+                st.line_chart(df[[selected_metric]])
+        else:
+            st.line_chart(df[[selected_metric]])
 
-                if label_column != "None":
-                    chart_data = df[[label_column, selected_metric]].copy()
-                    chart_data = chart_data.set_index(label_column)
-
-        st.line_chart(chart_data)
-
-    else:
-        st.info(
-            "This CSV does not contain numeric columns to plot."
-        )
-
-    st.download_button(
-        "Download this CSV",
-        data=Path(selected_result).read_bytes(),
-        file_name=Path(selected_result).name,
-        mime="text/csv",
-        use_container_width=True,
+    download_csv_button(
+        result_path,
+        "Download selected CSV",
+        "download_selected_csv",
     )
 
     st.caption(
-        "These charts display saved experiment data. "
-        "They do not represent live charging-station telemetry."
+        "These charts represent saved experimental data, not live charging-station telemetry."
     )
 
 
@@ -1046,7 +1101,7 @@ st.markdown(
     """
     <div style="text-align:center;color:#758078;font-size:0.8rem;padding:10px 0 20px 0;">
         EVora · Smart Charging Intelligence<br>
-        Q-learning research dashboard
+        Reinforcement learning research dashboard
     </div>
     """,
     unsafe_allow_html=True,

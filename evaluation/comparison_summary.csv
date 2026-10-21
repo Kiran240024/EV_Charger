@@ -1,0 +1,5 @@
+strategy,total_charging_cost,total_energy_kwh,peak_grid_load_kw,final_mean_soc_percent,average_charging_delay_minutes,deadline_violations,completed_sessions,charging_success_rate_percent,average_departure_soc_percent,sessions_never_charged,total_reward,steps
+DQN,1385.1030499999997,89.9,42.84988220342946,100.0,126.13636363636365,0.2,3.4,95.0,99.16316706154454,2.6,-2041.9422334417097,96.0
+Immediate Charging,1412.1695499999998,91.85,48.71974129358021,100.0,0.0,0.0,3.4,100.0,100.0,2.4,-6362.4189752,96.0
+Price-Based Charging,1409.8073,91.85,48.79034129358021,100.0,1.875,0.0,3.4,100.0,100.0,2.4,-6360.0567252,96.0
+Q-Learning,1417.5422999999998,92.55,48.859941293580206,100.0,0.8181818181818181,0.0,3.4,100.0,100.0,2.4,-4096.879967399999,96.0

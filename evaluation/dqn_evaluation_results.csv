@@ -1,0 +1,2 @@
+strategy,total_charging_cost,total_energy_kwh,peak_grid_load_kw,final_mean_soc_percent,average_charging_delay_minutes,deadline_violations,charging_success_rate_percent,average_departure_soc_percent,completed_departures,never_charged_ev_count,total_reward,average_reward_per_step,accumulated_overload_kw,evaluation_steps
+DQN,551.2045,27.5,22.548869025920535,100.0,45.0,0,100.0,100.0,7,1,-551.2045,-5.741713541666667,0.0,96
